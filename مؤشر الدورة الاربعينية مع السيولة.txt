@@ -1,0 +1,44 @@
+//@version=6
+indicator("مؤشر الدورة الأربعينية – VWAP + السيولة", "40Cycle VWAP", overlay = true, max_lines_count = 500, max_labels_count = 500)
+
+// الإعدادات
+cycleLen   = input.int(40, "طول الدورة (عدد الشموع)", minval = 5)
+useColorBg = input.bool(true, "تلوين الخلفية عند كل دورة؟")
+showText   = input.bool(true, "إظهار كلمات (دخول / خروج)؟")
+
+// الأساسيات
+src     = close
+vwapVal = ta.vwap(src)
+
+// كل شمعة رقمها من مضاعفات 40 نعتبرها شمعة دورة
+cycleBar = bar_index % cycleLen == 0
+
+// ✅ علامة تأكيد أن المؤشر شغال: طباعة "40" عند كل دورة
+plotshape(
+     cycleBar,
+     title     = "40-cycle mark",
+     text      = "40",
+     style     = shape.triangledown,
+     location  = location.abovebar,
+     size      = size.tiny
+)
+
+// 🔹 شروط الدخول والخروج:
+// دخول: شمعة دورة + إغلاق فوق VWAP + حجم أكبر من حجم الشمعة السابقة
+// خروج: شمعة دورة + إغلاق تحت VWAP + حجم أقل من حجم الشمعة السابقة
+bullCond = cycleBar and close > vwapVal and volume > volume[1]
+bearCond = cycleBar and close < vwapVal and volume < volume[1]
+
+// رسم خط عمودي خفيف عند كل دورة
+if cycleBar
+    line.new(bar_index, low, bar_index, high, extend = extend.none, style = line.style_dotted)
+
+// كتابة "دخول" / "خروج" على الشارت
+if showText and bullCond
+    label.new(bar_index, high, "دخول", style = label.style_label_up, textalign = text.align_center)
+
+if showText and bearCond
+    label.new(bar_index, low, "خروج", style = label.style_label_down, textalign = text.align_center)
+
+// تلوين الخلفية
+bgcolor(useColorBg and cycleBar ? color.new(color.gray, 90) : na)

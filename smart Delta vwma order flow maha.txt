@@ -1,0 +1,53 @@
+//@version=6
+indicator("SMART Delta + VWMA + OrderFlow", overlay=true, max_labels_count=500)
+
+// ================= INPUTS =================
+tfConfirm   = input.timeframe("15", "Higher TF Confirmation")
+vwmaLen     = input.int(20, "VWMA Length")
+deltaLen   = input.int(14, "Delta Smoothing")
+volLen     = input.int(20, "Volume MA")
+deltaTh    = input.float(0.0, "Min Delta Threshold")
+
+// ================= VWMA =================
+vwma = ta.vwma(close, vwmaLen)
+plot(vwma, color=color.orange, linewidth=2)
+
+// ================= DELTA =================
+buyVol  = close > open ? volume : 0
+sellVol = close < open ? volume : 0
+delta   = buyVol - sellVol
+deltaMA = ta.ema(delta, deltaLen)
+
+// ================= ORDER FLOW PROXY =================
+clv = (close - low) / math.max(high - low, syminfo.mintick)
+aggressiveBuy = clv > 0.7 and delta > deltaMA
+
+// ================= VOLUME =================
+volMA = ta.sma(volume, volLen)
+volStrong = volume > volMA
+
+// ================= TREND CONFIRM =================
+htfClose = request.security(syminfo.tickerid, tfConfirm, close)
+htfVWMA  = request.security(syminfo.tickerid, tfConfirm, ta.vwma(close, vwmaLen))
+trendUp  = htfClose > htfVWMA
+
+// ================= SIGNAL =================
+longSignal =
+     close > vwma and
+     delta > deltaTh and
+     delta > deltaMA and
+     aggressiveBuy and
+     volStrong and
+     trendUp
+
+// ================= VISUALS =================
+barcolor(longSignal ? color.lime : na)
+
+plotshape(longSignal, 
+     title="BUY", 
+     style=shape.triangleup, 
+     location=location.belowbar, 
+     color=color.lime, 
+     size=size.small)
+
+alertcondition(longSignal, "BUY SIGNAL", "SMART DELTA BUY SIGNAL")

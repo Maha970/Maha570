@@ -1,0 +1,259 @@
+// This Pine Script® code is subject to the terms of the Mozilla Public License 2.0
+// © DarkPoolCrypto
+
+//@version=6
+indicator("DarkPool Flow", overlay=true, max_lines_count=500, max_labels_count=500)
+
+// ==========================================
+// ─── 1. CONFIGURATION & TOOLTIPS ───
+// ==========================================
+
+// ── Auto-Adapt Logic ──
+grp_mode    = "1. Mode Selection"
+auto_tf     = input.bool(false, " Enable Auto-Adaptive Timeframes?", 
+              tooltip="Controls the 'Smart Logic' for timeframe selection.\n\n" +
+                      "• ENABLED: The script automatically selects the best Institutional Timeframes based on your chart:\n" +
+                      "   1. Scalping (<15m): Uses 15m Trend vs 1H Anchor.\n" +
+                      "   2. Day Trading (15m-1H): Uses 4H Trend vs Daily Anchor.\n" +
+                      "   3. Swing (4H-Daily): Uses Daily Trend vs Weekly Anchor.\n" +
+                      "   4. Investing (Weekly): Uses 21W EMA vs 50W SMA (Bull Market Support Band).\n\n" +
+                      "• DISABLED: The script uses the specific 'Manual' settings you define below.", group=grp_mode)
+
+// ── Fast Trend Settings ──
+grp_fast    = "2. Fast Trend Configuration (The Signal)"
+tf_manual_F = input.timeframe("D", "Fast Timeframe", tooltip="The shorter timeframe. Signals are generated when this crosses the Slow Trend.", group=grp_fast) 
+len_fast    = input.int(50, "Fast Length", minval=1, tooltip="Lookback period for the Fast Trend. Default is 50.", group=grp_fast)
+type_fast   = input.string("EMA", "Fast Type", options=["SMA", "EMA", "WMA", "RMA"], tooltip="Math type for the Fast Trend.", group=grp_fast)
+
+// ── Slow Trend Settings ──
+grp_slow    = "3. Slow Trend Configuration (The Anchor)"
+tf_manual_S = input.timeframe("W", "Slow Timeframe", tooltip="The longer timeframe. This acts as the heavy institutional anchor.", group=grp_slow)
+len_slow    = input.int(50, "Slow Length", minval=1, tooltip="Lookback period for the Slow Trend. Default is 50.", group=grp_slow)
+type_slow   = input.string("EMA", "Slow Type", options=["SMA", "EMA", "WMA", "RMA"], tooltip="Math type for the Slow Trend.", group=grp_slow)
+
+// ── Strategy Settings ──
+grp_strat   = "4. Strategy Settings"
+src_ma      = input.source(close, "Price Source", group=grp_strat)
+sig_mode    = input.string("First Breakout Only", "Signal Re-Entry", options=["All Signals", "First Breakout Only"], 
+              tooltip="• First Breakout: Shows only the first entry per trend (Cleaner).\n• All Signals: Shows entries every time filters realign (Good for compounding).", group=grp_strat)
+show_pull   = input.bool(false, "Show Pullback Signals (+)", tooltip="Displays a small (+) when price tests the Cloud and holds. Excellent for adding to positions.", group=grp_strat)
+
+// ── Filters ──
+grp_filt    = "5. Quality Filters"
+use_vol     = input.bool(true, "Volatility Check (ATR)", tooltip="Requires ATR > Average. Prevents trading dead markets.", group=grp_filt)
+use_rsi     = input.bool(true, "Momentum Check (RSI)", tooltip="Prevents FOMO at RSI extremes.", group=grp_filt)
+use_adx     = input.bool(true, "Strength Check (ADX)", tooltip="Requires ADX > 20. Essential for trend confirmation.", group=grp_filt)
+
+// ── Style ──
+grp_vis     = "6. Visual Style"
+col_bull    = input.color(color.new(#00E676, 0), "Bullish Color", group=grp_vis)
+col_bear    = input.color(color.new(#FF5252, 0), "Bearish Color", group=grp_vis)
+col_neut    = input.color(color.new(color.gray, 50), "Neutral (Choppy) Color", group=grp_vis)
+paint_bar   = input.bool(true, "Color Candles", group=grp_vis)
+cloud_trans = input.int(85, "Cloud Base Transparency", minval=0, maxval=100, group=grp_vis)
+
+// ── Dashboard ──
+grp_dash    = "7. Dashboard"
+show_dash   = input.bool(true, "Show Dashboard", group=grp_dash)
+compact_mod = input.bool(false, "Compact Mode", group=grp_dash)
+dash_pos_in = input.string("Top Right", "Position", options=["Top Right", "Top Left", "Bottom Right", "Bottom Left"], group=grp_dash)
+dash_size_in = input.string("Small", "Size", options=["Tiny", "Small", "Normal", "Large"], group=grp_dash)
+
+// ==========================================
+// ─── 2. ADVANCED AUTO-LOGIC ───
+// ==========================================
+
+tf_sec = timeframe.in_seconds(timeframe.period)
+is_scalp  = tf_sec < 900 
+is_day    = tf_sec >= 900 and tf_sec <= 3600
+is_swing  = tf_sec > 3600 and tf_sec <= 86400
+is_invest = tf_sec > 86400
+
+// Initialize with Manual Defaults
+var string t1   = tf_manual_F
+var string t2   = tf_manual_S
+var int    l1   = len_fast
+var int    l2   = len_slow
+var string type1 = type_fast
+var string type2 = type_slow
+
+if auto_tf
+    if is_scalp
+        // Scalping: 15m / 1H (Uses User Lengths)
+        t1 := "15", t2 := "60", l1 := len_fast, l2 := len_slow
+    else if is_day
+        // Day: 4H / Daily (Uses User Lengths)
+        t1 := "240", t2 := "D", l1 := len_fast, l2 := len_slow
+    else if is_swing
+        // Swing: Daily / Weekly (Uses User Lengths)
+        t1 := "D", t2 := "W", l1 := len_fast, l2 := len_slow
+    else if is_invest
+        // Investing: Special Case (Bull Market Band Logic)
+        t1 := "W", t2 := "W", l1 := 21, l2 := 50, type1 := "EMA", type2 := "SMA"
+
+readable_tf(tf) =>
+    tf == "15" ? "15m" : tf == "60" ? "1H" : tf == "240" ? "4H" : tf == "D" ? "1D" : tf == "W" ? "1W" : tf == "M" ? "1M" : tf
+
+// ==========================================
+// ─── 3. CALCULATIONS ───
+// ==========================================
+
+get_ma_calc(src, len, type) =>
+    switch type
+        "SMA" => ta.sma(src, len)
+        "EMA" => ta.ema(src, len)
+        "WMA" => ta.wma(src, len)
+        "RMA" => ta.rma(src, len)
+        => ta.ema(src, len)
+
+get_val(tf, src, len, type) =>
+    request.security(syminfo.tickerid, tf, get_ma_calc(src, len, type)[1], lookahead=barmerge.lookahead_on)
+
+tf_valid = timeframe.in_seconds(timeframe.period) <= timeframe.in_seconds(t1)
+
+fast_val = tf_valid ? get_val(t1, src_ma, l1, type1) : na
+slow_val = tf_valid ? get_val(t2, src_ma, l2, type2) : na
+
+// Filters
+atr = ta.atr(14), atr_avg = ta.sma(atr, 20)
+rsi = ta.rsi(close, 14)
+[_, _, adx] = ta.dmi(14, 14)
+
+f_vol = not use_vol or (atr > atr_avg)
+f_rsi_L = not use_rsi or (rsi < 70)
+f_rsi_S = not use_rsi or (rsi > 30)
+f_adx = not use_adx or (adx > 20)
+
+// Trend State
+is_uptrend   = fast_val > slow_val
+is_downtrend = fast_val < slow_val
+
+// ==========================================
+// ─── 4. SMART SIGNAL ENGINE ───
+// ==========================================
+
+// 1. Are all filters passing right now?
+all_filters_long  = f_vol and f_rsi_L and f_adx
+all_filters_short = f_vol and f_rsi_S and f_adx
+
+// 2. State Machine
+var int trend_state = 0 // 0=None, 1=Long, -1=Short
+bool trigger_long = false
+bool trigger_short = false
+
+// LONG LOGIC
+if is_uptrend
+    // If we are not currently in a Long State...
+    if trend_state != 1
+        // AND filters are good...
+        if all_filters_long
+            trigger_long := true
+            trend_state := 1
+    // If we ARE in a Long State, but user wants "All Signals" (Re-entries)
+    else if sig_mode == "All Signals" and all_filters_long and not all_filters_long[1]
+        trigger_long := true
+
+// SHORT LOGIC
+if is_downtrend
+    if trend_state != -1
+        if all_filters_short
+            trigger_short := true
+            trend_state := -1
+    else if sig_mode == "All Signals" and all_filters_short and not all_filters_short[1]
+        trigger_short := true
+
+// RESET STATE if trend flips
+if is_uptrend and trend_state == -1
+    trend_state := 0
+if is_downtrend and trend_state == 1
+    trend_state := 0
+
+// ==========================================
+// ─── 5. PULLBACKS ───
+// ==========================================
+
+is_inside_cloud = (low < math.max(fast_val, slow_val)) and (high > math.min(fast_val, slow_val))
+is_green_candle = close > open
+
+retest_long  = show_pull and trend_state == 1 and is_inside_cloud and is_green_candle and close > fast_val and all_filters_long
+retest_short = show_pull and trend_state == -1 and is_inside_cloud and not is_green_candle and close < fast_val and all_filters_short
+
+// ==========================================
+// ─── 6. VISUALS ───
+// ==========================================
+
+spread_pct = (math.abs(fast_val - slow_val) / close) * 100
+dyn_trans  = spread_pct < 0.5 ? 90 : spread_pct > 2.0 ? 60 : cloud_trans 
+
+p1 = plot(fast_val, "Fast Trend", color=tf_valid ? color.new(color.white, 50) : na)
+p2 = plot(slow_val, "Slow Trend", color=tf_valid ? color.new(color.white, 50) : na)
+fill(p1, p2, color=is_uptrend ? color.new(col_bull, dyn_trans) : color.new(col_bear, dyn_trans), title="Dynamic Cloud")
+
+plotshape(trigger_long, "Buy Trend", shape.triangleup, location.belowbar, col_bull, size=size.small)
+plotshape(trigger_short, "Sell Trend", shape.triangledown, location.abovebar, col_bear, size=size.small)
+plotchar(retest_long, "Buy Retest", "✚", location.belowbar, col_bull, size=size.tiny)
+plotchar(retest_short, "Sell Retest", "✚", location.abovebar, col_bear, size=size.tiny)
+
+color final_bar_col = na
+if paint_bar
+    if is_uptrend
+        final_bar_col := f_adx ? col_bull : col_neut
+    else
+        final_bar_col := f_adx ? col_bear : col_neut
+
+barcolor(final_bar_col)
+
+// ==========================================
+// ─── 7. DASHBOARD ───
+// ==========================================
+
+dash_size = switch dash_size_in
+    "Tiny"   => size.tiny
+    "Small"  => size.small
+    "Normal" => size.normal
+    "Large"  => size.large
+    => size.small
+
+dash_pos = switch dash_pos_in
+    "Top Right"    => position.top_right
+    "Top Left"     => position.top_left
+    "Bottom Left"  => position.bottom_left
+    => position.bottom_right
+
+if show_dash and barstate.islast and tf_valid
+    rows = compact_mod ? 3 : 6 
+    var tbl = table.new(dash_pos, 2, rows, border_width=1, border_color=color.new(color.gray, 85), bgcolor=color.new(color.black, 40))
+    
+    table.cell(tbl, 0, 0, syminfo.ticker, text_color=color.gray, text_size=dash_size, text_halign=text.align_left)
+    table.cell(tbl, 1, 0, "INSTITUTIONAL", text_color=color.gray, text_size=dash_size, text_halign=text.align_right)
+    
+    mode_label = auto_tf ? "AUTO" : "MANUAL"
+    mode_val   = readable_tf(t1) + "(" + str.tostring(l1) + ") / " + readable_tf(t2) + "(" + str.tostring(l2) + ")"
+    
+    table.cell(tbl, 0, 1, mode_label, text_color=color.white, text_size=dash_size, text_halign=text.align_left)
+    table.cell(tbl, 1, 1, mode_val, text_color=color.yellow, text_size=dash_size, text_halign=text.align_right)
+
+    status = is_uptrend ? "BULLISH" : "BEARISH"
+    t_col  = is_uptrend ? col_bull : col_bear
+    table.cell(tbl, 0, 2, "Trend", text_color=color.white, text_size=dash_size, text_halign=text.align_left)
+    table.cell(tbl, 1, 2, status, text_color=t_col, text_size=dash_size, text_halign=text.align_right)
+
+    if not compact_mod
+        spread = (math.abs(fast_val - slow_val) / close) * 100
+        table.cell(tbl, 0, 3, "Spread", text_color=color.white, text_size=dash_size, text_halign=text.align_left)
+        table.cell(tbl, 1, 3, str.tostring(spread, "#.##") + "%", text_color=color.white, text_size=dash_size, text_halign=text.align_right)
+
+        r_txt = (rsi < 70 and rsi > 30) ? "Clean" : "Extended"
+        r_col = (rsi < 70 and rsi > 30) ? col_bull : color.orange
+        table.cell(tbl, 0, 4, "Momentum", text_color=color.white, text_size=dash_size, text_halign=text.align_left)
+        table.cell(tbl, 1, 4, r_txt, text_color=r_col, text_size=dash_size, text_halign=text.align_right)
+
+        a_txt = adx > 20 ? "Strong" : "Weak"
+        a_col = adx > 20 ? col_bull : color.gray
+        table.cell(tbl, 0, 5, "Strength", text_color=color.white, text_size=dash_size, text_halign=text.align_left)
+        table.cell(tbl, 1, 5, a_txt, text_color=a_col, text_size=dash_size, text_halign=text.align_right)
+
+// Alerts
+alertcondition(trigger_long, "PRO: Buy Trend", "Buy Signal (Trend Start). Price: {{close}}")
+alertcondition(trigger_short, "PRO: Sell Trend", "Sell Signal (Trend Start). Price: {{close}}")
+
