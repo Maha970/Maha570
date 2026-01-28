@@ -1,9 +1,0 @@
-40
-r.yellow, 0) : na, title="Liquidity Spikes")
-
-// إشارات الدخول والخروج
-plotshape(longCondition, style=shape.labelup, location=location.belowbar, color=color.green, text="BUY\nLiquidity", textcolor=color.white, size=size.small)
-plotshape(exitCondition, style=shape.xcross, location=location.abovebar, color=color.red, size=size.tiny, title="Exit Signal")
-
-// --- تنبيهات (Alerts) ---
-alertcondition(longCondition, title="Satellite Buy Entry", message="High Volume Breakout on Satellite Stock!")
