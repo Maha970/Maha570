@@ -1,0 +1,40 @@
+//@version=5
+indicator("Saudi Satellite: Liquidity & VWAP Hunter", overlay=true, shorttitle="SA_Liquidity")
+
+// --- إعدادات المدخلات ---
+i_vwap_anchor = input.string("Session", "VWAP Period", options=["Session", "Week", "Month"])
+i_vol_mult    = input.float(1.5, "Volume Spike Multiplier", step=0.1, tooltip="تحديد حجم السيولة مقارنة بالمتوسط")
+i_ema_len     = input.int(200, "Trend Filter (EMA)", minval=1)
+
+// --- الحسابات الأساسية ---
+// 1. حساب متوسط السعر المرجح بالحجم (VWAP) كبديل ديناميكي لـ POC
+vwapVal = ta.vwap(close)
+
+// 2. فلتر الاتجاه العام
+emaTrend = ta.ema(close, i_ema_len)
+
+// 3. تحليل السيولة (Volume Analysis)
+volAvg = ta.sma(volume, 20)
+isHighVol = volume > (volAvg * i_vol_mult)
+
+// --- شروط الدخول والخروج (الاستراتيجية) ---
+// الدخول: السعر فوق المتوسط 200 + اختراق لخط VWAP + وجود سيولة عالية (دخول هوامير)
+longCondition = close > emaTrend and ta.crossover(close, vwapVal) and isHighVol
+
+// الخروج المبكر (للمضاربة): كسر خط VWAP لأسفل
+exitCondition = ta.crossunder(close, vwapVal)
+
+// --- الرسم على الشارت ---
+// رسم الخطوط
+plot(vwapVal, color=color.new(color.blue, 0), linewidth=2, title="Dynamic POC (VWAP)")
+plot(emaTrend, color=color.new(color.gray, 50), linewidth=2, title="Trend Filter (200 EMA)")
+
+// تلوين شموع السيولة (High Volume Bars)
+barcolor(isHighVol ? color.new(color.yellow, 0) : na, title="Liquidity Spikes")
+
+// إشارات الدخول والخروج
+plotshape(longCondition, style=shape.labelup, location=location.belowbar, color=color.green, text="BUY\nLiquidity", textcolor=color.white, size=size.small)
+plotshape(exitCondition, style=shape.xcross, location=location.abovebar, color=color.red, size=size.tiny, title="Exit Signal")
+
+// --- تنبيهات (Alerts) ---
+alertcondition(longCondition, title="Satellite Buy Entry", message="High Volume Breakout on Satellite Stock!")
