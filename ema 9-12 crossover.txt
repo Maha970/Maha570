@@ -1,0 +1,16 @@
+//@version=5
+strategy("Trend Following: EMA Crossover", overlay=true)
+
+shortEMA = ta.ema(close, 9)
+longEMA = ta.ema(close, 12)
+
+plot(shortEMA, color=color.orange, title="EMA 9")
+plot(longEMA, color=color.blue, title="EMA 12")
+
+longCondition = ta.crossover(shortEMA, longEMA)
+if (longCondition)
+    strategy.entry("Buy", strategy.long)
+
+shortCondition = ta.crossunder(shortEMA, longEMA)
+if (shortCondition)
+    strategy.close("Buy")
