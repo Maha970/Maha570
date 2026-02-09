@@ -1,0 +1,213 @@
+// This source code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © sudoMode
+// @version=5
+// @description ATR based trend detector
+// @release=1.1.2
+indicator(title = 'Multi-Timeframe Trends', shorttitle = 'Trendly', overlay = true)
+
+
+// --- user input ---
+// input groups
+atr_group 		= 'ATR'
+visuals_group	= 'Visuals'
+scalper_group 	= 'Scalper timeframes (in seconds)'
+intra_group 	= 'Intraday timeframes (in minutes)'
+swing_group 	= 'Swing timeframes (in hours)'
+
+// atr params
+// tooltips
+tt_length 		= 'Number of bars to look back while calculating ATR'
+tt_factor 		= 'Multiplier for ATR'
+tt_sensitivity 	= 'Higher the value, greater the gap between price & the trend line'
+
+length			= input.int(14, 'Length', 2, 300, group = atr_group, inline = '1')
+factor 			= input.float(2, 'Factor', 2, 50, step = 1, group = atr_group, inline = '1')
+sensitivity 	= input.float(0.5, 'Sensitivity', 0.1, 1, step = 0.1, group = atr_group, inline = '1')
+multiplier 		= math.pow(factor, 1.1 - sensitivity)
+plot(multiplier, display = display.data_window, title = 'Multiplier')
+
+// visuals params
+// tooltips
+tt_table 		= 'Toggle the visibility of trend table'
+tt_line 		= 'Display ATR bands \n - Green indicates bullish movement \n - Red indicates bearish movement \n - White indicates sideways movement or a loss in momentum'
+tt_width 		= 'Conifgure thickness of the plot line'
+
+show_trend_table 	= input.bool(true, 'Trend Table', group = visuals_group, inline = '2')
+table_position  	= input.string('Bottom-Right', 'Table Position', group = visuals_group, inline = '2',
+					  options = ['Bottom-Right', 'Bottom-Left', 'Top-Right', 'Top-Left'])
+text_size           = input.string('Tiny', 'Text Size', group = visuals_group, inline = '2',
+					  options = ['Auto', 'Tiny', 'Small', 'Normal', 'Large', 'Huge'])
+show_trend_line 	= input.bool(true, 'Trend Line', group = visuals_group, inline = '3')
+line_width 			= input.int(3, 'Line Width', minval=1, maxval=5, group = visuals_group, inline = '3')
+
+// timeframe params
+tf11 = input.string( '5', '', options =   [ '1', '3', '5'], inline = '3', group = scalper_group)
+tf12 = input.string('15', '', options = ['10', '15', '20'], inline = '3', group = scalper_group)
+tf13 = input.string('30', '', options = ['30', '45', '60'], inline = '3', group = scalper_group)
+
+tf21 = input.string( '3', '', options =    ['1', '3', '5'], inline = '4', group = intra_group)  
+tf22 = input.string('15', '', options = ['10', '15', '20'], inline = '4', group = intra_group)
+tf23 = input.string('30', '', options = ['30', '45', '60'], inline = '4', group = intra_group)
+
+tf31 = input.string('1', '', options =   ['1', '2', '3'], inline = '5', group = swing_group)
+tf32 = input.string('4', '', options =   ['4', '5', '6'], inline = '5', group = swing_group)
+tf33 = input.string('8', '', options = ['8', '12', '24'], inline = '5', group = swing_group)
+
+
+
+
+// --- constants ---
+// colors
+white     	= color.white
+green     	= color.rgb(66, 222, 66, 33)
+red       	= color.rgb(222, 66, 66, 33)
+gray      	= color.gray
+fill_white 	= color.new(white, 90)
+fill_green 	= color.new(green, 90)
+fill_red   	= color.new(red,   90)
+
+// direction symbol
+up 			= '⬆'
+down 		= '⬇'
+
+
+// --- utils ---
+// get true range on the given timeframe
+// trueRange = math.max(high - low, math.abs(high - close[1]), math.abs(low - close[1]))
+get_true_range(timeframe) =>
+    h = request.security(syminfo.tickerid, timeframe, high)
+    l = request.security(syminfo.tickerid, timeframe, low)
+    c = request.security(syminfo.tickerid, timeframe, close)
+
+    na(h[1]) ? h - l : math.max(math.max(h - l, math.abs(h - c[1])), math.abs(l - c[1]))
+    
+
+// get average true range
+get_atr(timeframe = timeframe.period, length = 14) =>
+    ta.rma(get_true_range(timeframe = timeframe), length)
+
+
+// compute trendline & direction
+trend_detector(timeframe, length, multiplier) =>
+	// get source & atr, based on timeframe
+	source = request.security(syminfo.tickerid, timeframe, hl2)
+	atr = get_atr(timeframe, length)
+	
+	// init trend lines
+	down_trend = source + (multiplier * atr)
+	up_trend = source - (multiplier * atr)
+	last_up_trend = nz(up_trend[1])
+	last_down_trend = nz(down_trend[1])
+
+	// find latest trend
+	up_trend := up_trend > last_up_trend or last_up_trend > hl2[1] ? up_trend : last_up_trend
+	down_trend := down_trend < last_down_trend or last_down_trend < hl2[1] ? down_trend : last_down_trend
+	
+	// set trend direction: 0 -> horizontal | 1 -> up | -1 -> down
+	int direction = 0
+	float trend = na
+	last_trend = nz(trend[1])
+	if not na(atr)
+		direction := last_trend >= last_down_trend ? (close > down_trend ? 1 : -1) : (close < up_trend ? -1 : 1)
+
+	trend := direction == 0 ? trend : (direction == 1 ? up_trend : down_trend)
+	[trend, direction]
+
+
+// --- plot trend lines ---
+// for current time frame
+[trend, direction] 	= trend_detector(timeframe = timeframe.period, length = length, multiplier = multiplier)
+center             	= (open + close) / 2
+fill_space          = plot(center, display = display.none)
+display            	= show_trend_line ? display.all : display.none
+line_color          = trend == trend[1] ? white : (direction == 1 ? green : red)
+fill_color          = trend == trend[1] ? fill_white : (direction == 1 ? fill_green : fill_red)
+bullish_trend       = direction > 0 ? trend : na
+bearish_trend       = direction < 0 ? trend : na
+
+bullish = plot(bullish_trend, 'Bullish', color = line_color, style = plot.style_linebr, linewidth = line_width, display = display)
+fill(fill_space, bullish, fill_color, fillgaps = false, display = display)
+bearish = plot(bearish_trend, 'Bearish', color = line_color, style = plot.style_linebr, linewidth = line_width, display = display)
+fill(fill_space, bearish, fill_color, fillgaps = false, display = display)
+
+
+position_map() =>
+	switch table_position
+		'Bottom-Right' => position.bottom_right
+		'Bottom-Left'  => position.bottom_left
+		'Top-Right'    => position.top_right
+		'Top-Left'     => position.top_left
+		=> 				  position.bottom_right
+
+
+text_size_map(size='Auto') =>
+	switch size
+		'Tiny'   => size.tiny
+		'Small'  => size.small
+		'Normal' => size.normal
+		'Large'  => size.large
+		'Huge'   => size.huge
+		'Auto'   => size.auto
+		=>		   size.tiny
+
+// --- trend table ---
+if show_trend_table
+	var tab = table.new(position_map(), columns = 9, rows = 3, border_color = color.rgb(100, 160, 256, 66), border_width = 1)
+
+	// title
+	table.cell(tab, 1, 0, 'Scalper', text_size = text_size_map(), text_color = color.gray)
+
+	// headers
+	table.cell(tab, 0, 1, tf11 + ' sec', text_size = text_size_map(text_size), text_color = color.new(color.gray, 20))
+	table.cell(tab, 1, 1, tf12 + ' sec', text_size = text_size_map(text_size), text_color = color.new(color.gray, 20))
+	table.cell(tab, 2, 1, tf13 + ' sec', text_size = text_size_map(text_size), text_color = color.new(color.gray, 20))
+
+	// cells
+	[t11, d11] = trend_detector(timeframe = tf11+'S', length = length, multiplier = multiplier)
+	[t12, d12] = trend_detector(timeframe = tf12+'S', length = length, multiplier = multiplier)
+	[t13, d13] = trend_detector(timeframe = tf13+'S', length = length, multiplier = multiplier)
+	c11 = d11 > 0 ? up : down, tc11 = d11 > 0 ? green : red
+	c12 = d12 > 0 ? up : down, tc12 = d12 > 0 ? green : red
+	c13 = d13 > 0 ? up : down, tc13 = d13 > 0 ? green : red
+	table.cell(tab, 0, 2, c11, text_size = size.large, text_color = tc11)
+	table.cell(tab, 1, 2, c12, text_size = size.large, text_color = tc12)
+	table.cell(tab, 2, 2, c13, text_size = size.large, text_color = tc13)
+
+	// title
+	table.cell(tab, 4, 0, 'Intraday', text_size = text_size_map(), text_color = color.gray)
+
+	// headers
+	table.cell(tab, 4, 1, tf22 + ' min', text_size = text_size_map(text_size), text_color = color.new(color.gray, 20))
+	table.cell(tab, 5, 1, tf23 + ' min', text_size = text_size_map(text_size), text_color = color.new(color.gray, 20))
+	table.cell(tab, 3, 1, tf21 + ' min', text_size = text_size_map(text_size), text_color = color.new(color.gray, 20))
+
+	// cells
+	[t21, d21] = trend_detector(timeframe = tf21, length = length, multiplier = multiplier)
+	[t22, d22] = trend_detector(timeframe = tf22, length = length, multiplier = multiplier)
+	[t23, d23] = trend_detector(timeframe = tf23, length = length, multiplier = multiplier)
+	c21 = d21 > 0 ? up : down, tc21 = d21 > 0 ? green : red
+	c22 = d22 > 0 ? up : down, tc22 = d22 > 0 ? green : red
+	c23 = d23 > 0 ? up : down, tc23 = d23 > 0 ? green : red
+	table.cell(tab, 3, 2, c21, text_size = size.large, text_color = tc21)
+	table.cell(tab, 4, 2, c22, text_size = size.large, text_color = tc22)
+	table.cell(tab, 5, 2, c23, text_size = size.large, text_color = tc23)
+
+	// title
+	table.cell(tab, 7, 0, 'Swing', text_size = text_size_map(), text_color = color.gray)
+
+	// headers
+	table.cell(tab, 6, 1, tf31 + ' hour', text_size = text_size_map(text_size), text_color = color.new(color.gray, 20))
+	table.cell(tab, 7, 1, tf32 + ' hour', text_size = text_size_map(text_size), text_color = color.new(color.gray, 20))
+	table.cell(tab, 8, 1, tf33 + ' hour', text_size = text_size_map(text_size), text_color = color.new(color.gray, 20))
+
+	// cells
+	[t31, d31] = trend_detector(timeframe = str.tostring(str.tonumber(tf31)*60), length = length, multiplier = multiplier)
+	[t32, d32] = trend_detector(timeframe = str.tostring(str.tonumber(tf32)*60), length = length, multiplier = multiplier)
+	[t33, d33] = trend_detector(timeframe = str.tostring(str.tonumber(tf33)*60), length = length, multiplier = multiplier)
+	c31 = d31 > 0 ? up : down, tc31 = d31 > 0 ? green : red
+	c32 = d32 > 0 ? up : down, tc32 = d32 > 0 ? green : red
+	c33 = d33 > 0 ? up : down, tc33 = d33 > 0 ? green : red
+	table.cell(tab, 6, 2, c31, text_size = size.large, text_color = tc31)
+	table.cell(tab, 7, 2, c32, text_size = size.large, text_color = tc32)
+	table.cell(tab, 8, 2, c33, text_size = size.large, text_color = tc33)
+
