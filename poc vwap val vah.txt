@@ -1,0 +1,41 @@
+//@version=5
+indicator("VWAP + VWMA + VAL/VAH - إعدادات ديناميكية", overlay=true)
+
+// ==========================
+// إعدادات المستخدم
+// ==========================
+showVWAP       = input.bool(true, title="إظهار VWAP؟")
+showVWMA       = input.bool(true, title="إظهار VWMA (POC)؟")
+showVALVAH     = input.bool(true, title="إظهار VAL و VAH؟")
+
+vwmaLength     = input.int(20, title="عدد الفترات لـ VWMA (POC)", minval=1)
+stdDevLength   = input.int(20, title="عدد الفترات للانحراف المعياري (VAL/VAH)", minval=1)
+
+vwapColor      = input.color(color.orange, title="لون VWAP")
+vwmaColor      = input.color(color.red, title="لون VWMA (POC)")
+valColor       = input.color(color.teal, title="لون VAL")
+vahColor       = input.color(color.fuchsia, title="لون VAH")
+
+vwmaSource     = input.source(close, title="مصدر VWMA")
+
+// ==========================
+// الحسابات
+// ==========================
+// VWAP
+vwap = ta.vwap
+
+// VWMA (POC)
+vwma = ta.vwma(vwmaSource, vwmaLength)
+
+// Standard Deviation حول VWMA
+stdDev = ta.stdev(vwmaSource, stdDevLength)
+val = vwma - stdDev
+vah = vwma + stdDev
+
+// ==========================
+// الرسومات
+// ==========================
+plot(showVWAP ? vwap : na, title="VWAP", color=vwapColor, linewidth=2)
+plot(showVWMA ? vwma : na, title="VWMA (POC)", color=vwmaColor, linewidth=2)
+plot(showVALVAH ? val : na, title="VAL", color=valColor, style=plot.style_line, linewidth=1)
+plot(showVALVAH ? vah : na, title="VAH", color=vahColor, style=plot.style_line, linewidth=1)
